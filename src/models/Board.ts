@@ -71,6 +71,12 @@ export class Board {
     const gridX = Math.floor((startX - PADDING) / CELL_SIZE);
     const gridY = Math.floor((startY - TITLE_HEIGHT) / CELL_SIZE);
     
+    // Check if any part of the piece would be outside the board
+    if (gridX < 0 || gridX + piece.width > BOARD_WIDTH ||
+        gridY < 0 || gridY + piece.height > BOARD_HEIGHT) {
+      return false;
+    }
+    
     // Check each cell of the piece
     for (let row = 0; row < piece.height; row++) {
       for (let col = 0; col < piece.width; col++) {
@@ -78,10 +84,8 @@ export class Board {
           const boardRow = gridY + row;
           const boardCol = gridX + col;
           
-          // Check bounds and cell availability
-          if (boardRow < 0 || boardRow >= BOARD_HEIGHT ||
-              boardCol < 0 || boardCol >= BOARD_WIDTH ||
-              this.grid[boardRow][boardCol] === null ||
+          // We already checked boundaries, just check if the cell is available
+          if (this.grid[boardRow][boardCol] === null ||
               this.grid[boardRow][boardCol] !== 0) {
             return false;
           }
@@ -92,8 +96,14 @@ export class Board {
   }
 
   placePiece(piece: Piece, x: number, y: number): void {
+    // Convert pixel coordinates to grid coordinates
     const gridX = Math.floor((x - PADDING) / CELL_SIZE);
     const gridY = Math.floor((y - TITLE_HEIGHT) / CELL_SIZE);
+    
+    // Only place if the position is valid
+    if (!this.isValidPosition(piece, x, y)) {
+      return;
+    }
     
     // Place each cell of the piece
     for (let row = 0; row < piece.height; row++) {
@@ -136,5 +146,75 @@ export class Board {
       x: (e.clientX - rect.left) / scale,
       y: (e.clientY - rect.top) / scale
     };
+  }
+
+  getPlacedPieceAtPosition(x: number, y: number): Piece | null {
+    // Convert pixel coordinates to grid coordinates
+    const gridX = Math.floor((x - PADDING) / CELL_SIZE);
+    const gridY = Math.floor((y - TITLE_HEIGHT) / CELL_SIZE);
+    
+    // Check if click is within board bounds
+    if (gridX < 0 || gridX >= BOARD_WIDTH || 
+        gridY < 0 || gridY >= BOARD_HEIGHT ||
+        this.grid[gridY][gridX] === null ||
+        this.grid[gridY][gridX] === 0) {
+      return null;
+    }
+
+    // Get the color of the clicked cell
+    const color = this.grid[gridY][gridX];
+    
+    // Find all connected cells of the same color
+    const visited = new Set<string>();
+    const shape: number[][] = [];
+    let minX = gridX;
+    let minY = gridY;
+    let maxX = gridX;
+    let maxY = gridY;
+
+    const explore = (row: number, col: number) => {
+      const key = `${row},${col}`;
+      if (visited.has(key)) return;
+      
+      if (row < 0 || row >= BOARD_HEIGHT || 
+          col < 0 || col >= BOARD_WIDTH || 
+          this.grid[row][col] !== color) {
+        return;
+      }
+
+      visited.add(key);
+      minX = Math.min(minX, col);
+      maxX = Math.max(maxX, col);
+      minY = Math.min(minY, row);
+      maxY = Math.max(maxY, row);
+
+      explore(row + 1, col);
+      explore(row - 1, col);
+      explore(row, col + 1);
+      explore(row, col - 1);
+    };
+
+    explore(gridY, gridX);
+
+    // Create the piece shape
+    const width = maxX - minX + 1;
+    const height = maxY - minY + 1;
+    for (let i = 0; i < height; i++) {
+      shape[i] = Array(width).fill(0);
+    }
+
+    // Fill in the shape
+    visited.forEach(key => {
+      const [row, col] = key.split(',').map(Number);
+      shape[row - minY][col - minX] = 1;
+    });
+
+    // Remove the piece from the board
+    visited.forEach(key => {
+      const [row, col] = key.split(',').map(Number);
+      this.grid[row][col] = 0;
+    });
+
+    return new Piece(shape, color as string);
   }
 } 

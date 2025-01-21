@@ -1,9 +1,9 @@
-export const CELL_SIZE = 30;
+export const CELL_SIZE = 50;
 export const BOARD_WIDTH = 5;
 export const BOARD_HEIGHT = 6;
-export const PADDING = 20;
-export const TITLE_HEIGHT = 60;
-export const SELECTION_HEIGHT = 120;
+export const PADDING = 40;
+export const TITLE_HEIGHT = 80;
+export const SELECTION_HEIGHT = 160;
 export const WINDOW_WIDTH = BOARD_WIDTH * CELL_SIZE + PADDING * 2;
 export const WINDOW_HEIGHT = BOARD_HEIGHT * CELL_SIZE + PADDING;
 
@@ -16,11 +16,11 @@ export const COLORS = {
 } as const;
 
 export const PIECE_COLORS = {
-  RED_S: '#ff0000',
-  GREEN_Z: '#00ff00',
-  PURPLE_T: '#800080',
-  ORANGE_L: '#ffa500',
-  BLUE_L: '#0000ff',
-  YELLOW_SQUARE: '#ffff00',
-  CYAN_LINE: '#00ffff',
+  RED_S: '#ff4444',
+  GREEN_Z: '#44ff44',
+  PURPLE_T: '#9933cc',
+  ORANGE_L: '#ffaa33',
+  BLUE_L: '#3333ff',
+  YELLOW_SQUARE: '#ffff44',
+  CYAN_LINE: '#33ffff',
 } as const; 
