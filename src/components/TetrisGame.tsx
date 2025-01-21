@@ -401,19 +401,17 @@ export default function TetrisGame() {
   };
 
   return (
-    <div className="flex items-center justify-center h-screen w-full overflow-hidden">
-      <div className="relative w-full h-full flex items-center justify-center p-4">
-        <canvas
-          ref={canvasRef}
-          width={WINDOW_WIDTH}
-          height={WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}
-          className="max-h-[95vh] max-w-[95vw] border-2 border-gray-700 rounded-lg shadow-lg object-contain touch-none"
-          style={{ 
-            aspectRatio: `${WINDOW_WIDTH}/${WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}`,
-            height: 'auto'
-          }}
-        />
-      </div>
+    <div className="fixed inset-0 flex items-center justify-center">
+      <canvas
+        ref={canvasRef}
+        width={WINDOW_WIDTH}
+        height={WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}
+        className="max-h-[95vh] max-w-[95vw] border-2 border-gray-700 rounded-lg shadow-lg touch-none"
+        style={{ 
+          aspectRatio: `${WINDOW_WIDTH}/${WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}`,
+          height: 'auto'
+        }}
+      />
     </div>
   );
 }
