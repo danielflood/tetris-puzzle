@@ -5,8 +5,7 @@ import {
   BOARD_HEIGHT,
   PADDING,
   TITLE_HEIGHT,
-  WINDOW_WIDTH,
-  COLORS,
+  WINDOW_WIDTH
 } from '../utils/constants';
 
 export type Grid = (number | string | null)[][];

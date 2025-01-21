@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Board } from '../models/Board';
+import { Piece } from '../models/Piece';
 import {
   CELL_SIZE,
   WINDOW_WIDTH,
@@ -16,10 +17,7 @@ export default function TetrisGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const boardRef = useRef<Board>(new Board());
   const refreshIconRef = useRef<HTMLImageElement | null>(null);
-  const [scale, setScale] = useState(1);
   const [mousePosition, setMousePosition] = useState<{ x: number, y: number } | null>(null);
-  const [lastTapTime, setLastTapTime] = useState<number>(0);
-  const DOUBLE_TAP_DELAY = 300; // ms
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -60,9 +58,6 @@ export default function TetrisGame() {
       canvas.style.height = `${(WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT) * newScale}px`;
       canvas.width = WINDOW_WIDTH;
       canvas.height = WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT;
-      
-      // Store scale for mouse position calculations
-      setScale(newScale);
     };
 
     const board = boardRef.current;
@@ -377,7 +372,7 @@ export default function TetrisGame() {
       canvas.removeEventListener('touchmove', handleTouchMove);
       canvas.removeEventListener('touchend', handleTouchEnd);
     };
-  }, []);
+  }, [mousePosition]);
 
   const getPieceAtPosition = (x: number, y: number) => {
     const board = boardRef.current;
@@ -457,18 +452,6 @@ function drawGame(
       resetButtonSize/2
     );
     ctx.restore();
-  }
-
-  // Draw hover text if mouse is over button
-  if (mousePosition && 
-      mousePosition.x >= resetButtonX && 
-      mousePosition.x <= resetButtonX + resetButtonSize &&
-      mousePosition.y >= resetButtonY && 
-      mousePosition.y <= resetButtonY + resetButtonSize) {
-    ctx.font = '14px Arial';
-    ctx.fillStyle = '#FFFFFF';
-    ctx.textAlign = 'right';
-    ctx.fillText('Reset Board', resetButtonX - 5, resetButtonY + resetButtonSize/2 + 5);
   }
 
   // Draw title
@@ -569,7 +552,7 @@ function drawGame(
   board.updateScroll();
 }
 
-function drawPieceInSelection(ctx: CanvasRenderingContext2D, piece: any, x: number) {
+function drawPieceInSelection(ctx: CanvasRenderingContext2D, piece: Piece, x: number) {
   const y = WINDOW_HEIGHT + TITLE_HEIGHT + 20;
 
   for (let row = 0; row < piece.height; row++) {
