@@ -17,9 +17,17 @@ export default function TetrisGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const boardRef = useRef<Board>(new Board());
   const refreshIconRef = useRef<HTMLImageElement | null>(null);
+  const rotateIconRef = useRef<HTMLImageElement | null>(null);
   const [mousePosition, setMousePosition] = useState<{ x: number, y: number } | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
+  const [isScrolling, setIsScrolling] = useState(false);
+  const [scrollStartX, setScrollStartX] = useState(0);
+  const [scrollStartOffset, setScrollStartOffset] = useState(0);
 
   useEffect(() => {
+    // Detect if we're on mobile
+    setIsMobile('ontouchstart' in window);
+    
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -33,11 +41,17 @@ export default function TetrisGame() {
       refreshIconRef.current = refreshIcon;
     };
 
+    // Load rotate icon once
+    const rotateIcon = new Image();
+    rotateIcon.src = '/rotate_piece.svg';
+    rotateIcon.onload = () => {
+      rotateIconRef.current = rotateIcon;
+    };
+
     // Calculate scale based on window size
     const updateScale = () => {
       if (!canvas) return;
       
-      // Use 95vh to match the max-h-[95vh] class
       const maxHeight = window.innerHeight * 0.95;
       const maxWidth = window.innerWidth * 0.95;
       
@@ -46,14 +60,11 @@ export default function TetrisGame() {
       
       let newScale;
       if (containerAspect > gameAspect) {
-        // Container is wider than game - use height to scale
         newScale = maxHeight / (WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT);
       } else {
-        // Container is taller than game - use width to scale
         newScale = maxWidth / WINDOW_WIDTH;
       }
       
-      // Update canvas size
       canvas.style.width = `${WINDOW_WIDTH * newScale}px`;
       canvas.style.height = `${(WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT) * newScale}px`;
       canvas.width = WINDOW_WIDTH;
@@ -81,6 +92,30 @@ export default function TetrisGame() {
       
       setMousePosition({ x, y });
 
+      // Check if touching scroll bar area
+      const scrollBarHeight = 6;
+      const scrollBarY = WINDOW_HEIGHT + TITLE_HEIGHT + SELECTION_HEIGHT - scrollBarHeight - 10;
+      if (y >= scrollBarY - 10 && y <= scrollBarY + scrollBarHeight + 10) {
+        setIsScrolling(true);
+        setScrollStartX(x);
+        setScrollStartOffset(board.scrollOffset);
+        return;
+      }
+
+      // If game is won, only allow clicking the reset button
+      if (board.hasWon) {
+        const buttonWidth = 120;
+        const buttonHeight = 40;
+        const buttonX = (WINDOW_WIDTH - buttonWidth) / 2;
+        const buttonY = (WINDOW_HEIGHT + TITLE_HEIGHT) / 2 + 20;
+
+        if (x >= buttonX && x <= buttonX + buttonWidth &&
+            y >= buttonY && y <= buttonY + buttonHeight) {
+          board.resetBoard();
+        }
+        return;
+      }
+
       // Check reset button
       const resetButtonSize = 40;
       const resetButtonPadding = 10;
@@ -93,49 +128,97 @@ export default function TetrisGame() {
         return;
       }
 
-      // Check rotate button if piece is selected
-      if (board.selectedPiece) {
-        const rotateButtonSize = 40;
-        const rotateButtonPadding = 10;
-        const rotateButtonX = rotateButtonPadding;
-        const rotateButtonY = resetButtonY;
-        
-        if (x >= rotateButtonX && x <= rotateButtonX + rotateButtonSize &&
-            y >= rotateButtonY && y <= rotateButtonY + rotateButtonSize) {
-          board.selectedPiece.rotate();
-          return;
-        }
-      }
+      // Rest of the touch handling only if game is not won
+      if (!board.hasWon) {
+        // Check rotate button if piece is selected
+        if (board.selectedPiece) {
+          const rotateButtonSize = 40;
+          const rotateButtonPadding = 10;
+          const rotateButtonX = rotateButtonPadding;
+          const rotateButtonY = resetButtonY;
+          
+          if (x >= rotateButtonX && x <= rotateButtonX + rotateButtonSize &&
+              y >= rotateButtonY && y <= rotateButtonY + rotateButtonSize) {
+            board.selectedPiece.rotate();
+            return;
+          }
 
-      // Handle piece selection
-      if (y >= TITLE_HEIGHT && y < WINDOW_HEIGHT + TITLE_HEIGHT) {
-        const placedPiece = board.getPlacedPieceAtPosition(x, y);
-        if (placedPiece) {
-          board.selectedPiece = placedPiece;
-          board.dragging = true;
-          board.dragPos = { x, y };
-          return;
+          // Add place button check
+          const placeButtonSize = 40;
+          const placeButtonX = WINDOW_WIDTH / 2 - placeButtonSize / 2;
+          const placeButtonY = resetButtonY;
+          
+          if (x >= placeButtonX && x <= placeButtonX + placeButtonSize &&
+              y >= placeButtonY && y <= placeButtonY + placeButtonSize) {
+            // Try to place the piece at the touch location
+            const adjustedX = x - (board.selectedPiece.width * CELL_SIZE) / 2;
+            const adjustedY = y - (board.selectedPiece.height * CELL_SIZE) / 2;
+
+            if (board.isValidPosition(board.selectedPiece, adjustedX, adjustedY)) {
+              board.placePiece(board.selectedPiece, adjustedX, adjustedY);
+              if (board.availablePieces.includes(board.selectedPiece)) {
+                board.availablePieces = board.availablePieces.filter(
+                  p => p !== board.selectedPiece
+                );
+              }
+
+              if (board.checkWin()) {
+                board.hasWon = true;
+              }
+            }
+            board.selectedPiece = null;
+            return;
+          }
         }
-      }
-      
-      const piece = getPieceAtPosition(x, y);
-      if (piece && !board.hasWon) {
-        board.selectedPiece = piece;
-        board.dragging = true;
-        board.dragPos = { x, y };
+
+        // Handle piece selection with tap
+        if (y >= TITLE_HEIGHT && y < WINDOW_HEIGHT + TITLE_HEIGHT) {
+          const placedPiece = board.getPlacedPieceAtPosition(x, y);
+          if (placedPiece) {
+            board.selectedPiece = placedPiece;
+            board.dragPos = { x, y };
+            return;
+          }
+        }
+        
+        const piece = getPieceAtPosition(x, y);
+        if (piece) {
+          // If tapping a different piece, switch selection
+          if (board.selectedPiece !== piece) {
+            board.selectedPiece = piece;
+            board.dragPos = { x, y };
+          }
+        } else if (!piece && y < WINDOW_HEIGHT + TITLE_HEIGHT) {
+          // If tapping empty space on board, clear selection
+          board.selectedPiece = null;
+        }
       }
     };
 
     const handleTouchMove = (e: TouchEvent) => {
       e.preventDefault();
-      if (!canvas) return;
+      if (!canvas || board.hasWon) return;
 
       const touch = e.touches[0];
       const { x, y } = getCanvasCoordinates(touch.clientX, touch.clientY);
       
       setMousePosition({ x, y });
       
-      if (board.dragging) {
+      if (isScrolling) {
+        const totalWidth = board.availablePieces.reduce((width, piece) =>
+          width + (piece.width + 1) * CELL_SIZE, 0) - CELL_SIZE;
+        const maxScroll = Math.max(0, totalWidth - WINDOW_WIDTH + 2 * PADDING);
+        const scrollableWidth = WINDOW_WIDTH - 2 * PADDING;
+        
+        const deltaX = x - scrollStartX;
+        const scrollDelta = (deltaX / scrollableWidth) * totalWidth;
+        board.targetScroll = Math.max(0, Math.min(maxScroll, scrollStartOffset + scrollDelta));
+        return;
+      }
+      
+      if (board.selectedPiece) {
+        // Start dragging on move if we have a selected piece
+        board.dragging = true;
         board.dragPos = { x, y };
       } else if (y >= WINDOW_HEIGHT + TITLE_HEIGHT) {
         // Scrolling available pieces area
@@ -151,13 +234,17 @@ export default function TetrisGame() {
 
     const handleTouchEnd = (e: TouchEvent) => {
       e.preventDefault();
-      if (!canvas || !board.dragging || board.hasWon) return;
+      if (!canvas || board.hasWon) return;
+
+      if (isScrolling) {
+        setIsScrolling(false);
+        return;
+      }
 
       const touch = e.changedTouches[0];
       const { x, y } = getCanvasCoordinates(touch.clientX, touch.clientY);
 
-      // Handle piece placement (similar to mouse up)
-      if (board.selectedPiece) {
+      if (board.selectedPiece && board.dragging) {
         let piecePlaced = false;
         
         if (y >= TITLE_HEIGHT && y < WINDOW_HEIGHT + TITLE_HEIGHT) {
@@ -183,8 +270,11 @@ export default function TetrisGame() {
           board.availablePieces.push(board.selectedPiece);
         }
 
+        // Only clear selection if we successfully placed the piece
+        if (piecePlaced) {
+          board.selectedPiece = null;
+        }
         board.dragging = false;
-        board.selectedPiece = null;
       }
     };
 
@@ -352,7 +442,7 @@ export default function TetrisGame() {
       const delta = timestamp - lastRender;
       
       if (delta >= frameInterval) {
-        drawGame(ctx, board, mousePosition, refreshIconRef.current);
+        drawGame(ctx, board, mousePosition, refreshIconRef.current, rotateIconRef.current);
         lastRender = timestamp - (delta % frameInterval);
       }
       
@@ -420,7 +510,8 @@ function drawGame(
   ctx: CanvasRenderingContext2D, 
   board: Board,
   mousePosition: { x: number, y: number } | null,
-  refreshIcon: HTMLImageElement | null
+  refreshIcon: HTMLImageElement | null,
+  rotateIcon: HTMLImageElement | null
 ) {
   // Fill background
   ctx.fillStyle = COLORS.BG_COLOR;
@@ -444,10 +535,10 @@ function drawGame(
     ctx.filter = 'brightness(0) invert(1)';
     ctx.drawImage(
       refreshIcon,
-      resetButtonX + resetButtonSize/4,
-      resetButtonY + resetButtonSize/4,
-      resetButtonSize/2,
-      resetButtonSize/2
+      resetButtonX + resetButtonSize/8,
+      resetButtonY + resetButtonSize/8,
+      resetButtonSize * 3/4,
+      resetButtonSize * 3/4
     );
     ctx.restore();
   }
@@ -489,9 +580,34 @@ function drawGame(
   let pieceX = PADDING - board.scrollOffset;
   for (const piece of board.availablePieces) {
     if (piece !== board.selectedPiece || !board.dragging) {
-      drawPieceInSelection(ctx, piece, pieceX);
+      drawPieceInSelection(ctx, piece, pieceX, board);
     }
     pieceX += (piece.width + 1) * CELL_SIZE;
+  }
+
+  // Draw scroll bar for mobile
+  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+    const scrollBarHeight = 6;
+    const scrollBarY = WINDOW_HEIGHT + TITLE_HEIGHT + SELECTION_HEIGHT - scrollBarHeight - 10;
+    const totalWidth = board.availablePieces.reduce((width, piece) =>
+      width + (piece.width + 1) * CELL_SIZE, 0) - CELL_SIZE;
+    
+    // Draw scroll bar background
+    ctx.fillStyle = '#444444';
+    ctx.fillRect(PADDING, scrollBarY, WINDOW_WIDTH - 2 * PADDING, scrollBarHeight);
+    
+    // Calculate and draw scroll handle
+    const maxScroll = Math.max(0, totalWidth - WINDOW_WIDTH + 2 * PADDING);
+    if (maxScroll > 0) {
+      const handleWidth = Math.max(40, (WINDOW_WIDTH - 2 * PADDING) * (WINDOW_WIDTH / totalWidth));
+      const scrollProgress = board.scrollOffset / maxScroll;
+      const handleX = PADDING + scrollProgress * ((WINDOW_WIDTH - 2 * PADDING) - handleWidth);
+      
+      ctx.fillStyle = '#888888';
+      ctx.beginPath();
+      ctx.roundRect(handleX, scrollBarY, handleWidth, scrollBarHeight, 3);
+      ctx.fill();
+    }
   }
 
   // Draw dragged piece
@@ -517,32 +633,18 @@ function drawGame(
     ctx.arc(rotateButtonX + rotateButtonSize/2, rotateButtonY + rotateButtonSize/2, rotateButtonSize/2, 0, Math.PI * 2);
     ctx.fill();
 
-    // Draw rotate arrow
-    ctx.strokeStyle = '#FFFFFF';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    const centerX = rotateButtonX + rotateButtonSize/2;
-    const centerY = rotateButtonY + rotateButtonSize/2;
-    const radius = rotateButtonSize/3;
-    
-    // Draw circular arrow
-    ctx.arc(centerX, centerY, radius, 0, 1.5 * Math.PI);
-    ctx.moveTo(centerX + radius, centerY);
-    ctx.lineTo(centerX + radius + 5, centerY - 5);
-    ctx.moveTo(centerX + radius, centerY);
-    ctx.lineTo(centerX + radius + 5, centerY + 5);
-    ctx.stroke();
-
-    // Draw hover text
-    if (mousePosition && 
-        mousePosition.x >= rotateButtonX && 
-        mousePosition.x <= rotateButtonX + rotateButtonSize &&
-        mousePosition.y >= rotateButtonY && 
-        mousePosition.y <= rotateButtonY + rotateButtonSize) {
-      ctx.font = '14px Arial';
-      ctx.fillStyle = '#FFFFFF';
-      ctx.textAlign = 'left';
-      ctx.fillText('Rotate Piece', rotateButtonX + rotateButtonSize + 5, rotateButtonY + rotateButtonSize/2 + 5);
+    // Draw rotate icon if loaded
+    if (rotateIcon) {
+      ctx.save();
+      ctx.filter = 'brightness(0) invert(1)';
+      ctx.drawImage(
+        rotateIcon,
+        rotateButtonX + rotateButtonSize/4,
+        rotateButtonY + rotateButtonSize/4,
+        rotateButtonSize/2,
+        rotateButtonSize/2
+      );
+      ctx.restore();
     }
   }
 
@@ -550,13 +652,19 @@ function drawGame(
   board.updateScroll();
 }
 
-function drawPieceInSelection(ctx: CanvasRenderingContext2D, piece: Piece, x: number) {
+function drawPieceInSelection(ctx: CanvasRenderingContext2D, piece: Piece, x: number, board: Board) {
   const y = WINDOW_HEIGHT + TITLE_HEIGHT + 20;
+  const isSelected = board.selectedPiece === piece;
 
   for (let row = 0; row < piece.height; row++) {
     for (let col = 0; col < piece.width; col++) {
       if (piece.shape[row][col]) {
-        ctx.fillStyle = piece.color;
+        // Brighten the color if the piece is selected
+        if (isSelected) {
+          ctx.fillStyle = adjustBrightness(piece.color, 1.3);
+        } else {
+          ctx.fillStyle = piece.color;
+        }
         ctx.fillRect(
           x + col * CELL_SIZE,
           y + row * CELL_SIZE,
@@ -598,14 +706,14 @@ function drawDraggedPiece(ctx: CanvasRenderingContext2D, board: Board) {
     boardTop <= mouseY && mouseY <= boardBottom
   );
 
-  // Draw the dragged piece with transparency
+  // Draw the dragged piece with transparency and brightened color
   ctx.globalAlpha = 0.5;
   for (let row = 0; row < board.selectedPiece.height; row++) {
     for (let col = 0; col < board.selectedPiece.width; col++) {
       if (board.selectedPiece.shape[row][col]) {
         const x = Math.round(startX + col * CELL_SIZE);
         const y = Math.round(startY + row * CELL_SIZE);
-        ctx.fillStyle = board.selectedPiece.color;
+        ctx.fillStyle = adjustBrightness(board.selectedPiece.color, 1.3);
         ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
       }
     }
@@ -666,4 +774,21 @@ function drawWinMessage(ctx: CanvasRenderingContext2D) {
   ctx.fillText('Reset Game', 
     WINDOW_WIDTH / 2,
     buttonY + buttonHeight/2 + 6);
+}
+
+function adjustBrightness(color: string, factor: number): string {
+  // Convert hex to RGB
+  const hex = color.replace('#', '');
+  const r = parseInt(hex.substr(0, 2), 16);
+  const g = parseInt(hex.substr(2, 2), 16);
+  const b = parseInt(hex.substr(4, 2), 16);
+
+  // Adjust brightness
+  const adjustedR = Math.min(255, Math.round(r * factor));
+  const adjustedG = Math.min(255, Math.round(g * factor));
+  const adjustedB = Math.min(255, Math.round(b * factor));
+
+  // Convert back to hex
+  const toHex = (n: number) => n.toString(16).padStart(2, '0');
+  return `#${toHex(adjustedR)}${toHex(adjustedG)}${toHex(adjustedB)}`;
 } 
