@@ -107,15 +107,48 @@ export default function TetrisGame() {
       };
     };
 
+    // Add vibration feedback functions
+    const vibrateSuccess = () => {
+      if ('vibrate' in navigator) {
+        navigator.vibrate(50); // Short success vibration
+      }
+    };
+
+    const vibrateError = () => {
+      if ('vibrate' in navigator) {
+        navigator.vibrate([30, 30, 30]); // Three quick error pulses
+      }
+    };
+
+    // Add state for tracking the primary touch
+    let lastDragPos = { x: 0, y: 0 };
+    let isRotating = false;
+
     const handleTouchStart = (e: TouchEvent) => {
       e.preventDefault(); // Prevent scrolling
       if (!staticCanvas) return;
+
+      // If already dragging and a second finger touches, just rotate
+      if (boardRef.current.dragging && boardRef.current.selectedPiece && e.touches.length === 2) {
+        boardRef.current.selectedPiece.rotate();
+        vibrateSuccess(); // Give feedback for rotation
+        isDirtyRef.current = true;
+        return;
+      }
+
+      // Only handle first touch for dragging/selection
+      if (e.touches.length > 1) {
+        return;
+      }
 
       const touch = e.touches[0];
       const { x, y } = getCanvasCoordinates(touch.clientX, touch.clientY);
       
       setMousePosition({ x, y });
       isDirtyRef.current = true;
+
+      // Store the initial touch identifier for tracking
+      const primaryTouchId = touch.identifier;
 
       // Define common button dimensions
       const buttonPadding = 10;
@@ -203,6 +236,9 @@ export default function TetrisGame() {
       e.preventDefault();
       if (!staticCanvas || boardRef.current.hasWon) return;
 
+      // Ignore move events with multiple touches
+      if (e.touches.length > 1) return;
+
       const touch = e.touches[0];
       const { x, y } = getCanvasCoordinates(touch.clientX, touch.clientY);
       
@@ -234,7 +270,6 @@ export default function TetrisGame() {
       }
       
       if (boardRef.current.selectedPiece) {
-        // Ensure we maintain the piece reference on iOS
         boardRef.current.dragging = true;
         boardRef.current.dragPos = { x, y };
         isDirtyRef.current = true;
@@ -243,6 +278,7 @@ export default function TetrisGame() {
 
     const handleTouchEnd = (e: TouchEvent) => {
       e.preventDefault();
+      
       if (!staticCanvas || boardRef.current.hasWon) return;
 
       if (isScrolling) {
@@ -278,12 +314,15 @@ export default function TetrisGame() {
               boardRef.current.targetScroll = boardRef.current.scrollOffset;
             }
             piecePlaced = true;
+            vibrateSuccess(); // Vibrate on successful placement
 
             if (boardRef.current.checkWin()) {
               boardRef.current.hasWon = true;
             }
             // Only clear selection if piece was successfully placed
             boardRef.current.selectedPiece = null;
+          } else {
+            vibrateError(); // Vibrate on invalid placement attempt
           }
         }
 
