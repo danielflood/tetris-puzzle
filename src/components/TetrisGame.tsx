@@ -165,33 +165,7 @@ export default function TetrisGame() {
           if (x >= rotateButtonX && x <= rotateButtonX + rotateButtonSize &&
               y >= rotateButtonY && y <= rotateButtonY + rotateButtonSize) {
             boardRef.current.selectedPiece.rotate();
-            return;
-          }
-
-          // Add place button check
-          const placeButtonSize = 40;
-          const placeButtonX = WINDOW_WIDTH / 2 - placeButtonSize / 2;
-          const placeButtonY = resetButtonY;
-          
-          if (x >= placeButtonX && x <= placeButtonX + placeButtonSize &&
-              y >= placeButtonY && y <= placeButtonY + placeButtonSize) {
-            // Try to place the piece at the touch location
-            const adjustedX = x - (boardRef.current.selectedPiece.width * CELL_SIZE) / 2;
-            const adjustedY = y - (boardRef.current.selectedPiece.height * CELL_SIZE) / 2;
-
-            if (boardRef.current.isValidPosition(boardRef.current.selectedPiece, adjustedX, adjustedY)) {
-              boardRef.current.placePiece(boardRef.current.selectedPiece, adjustedX, adjustedY);
-              if (boardRef.current.availablePieces.includes(boardRef.current.selectedPiece)) {
-                boardRef.current.availablePieces = boardRef.current.availablePieces.filter(
-                  p => p !== boardRef.current.selectedPiece
-                );
-              }
-
-              if (boardRef.current.checkWin()) {
-                boardRef.current.hasWon = true;
-              }
-            }
-            boardRef.current.selectedPiece = null;
+            isDirtyRef.current = true;
             return;
           }
         }
@@ -202,20 +176,24 @@ export default function TetrisGame() {
           if (placedPiece) {
             boardRef.current.selectedPiece = placedPiece;
             boardRef.current.dragPos = { x, y };
+            boardRef.current.dragging = true;
+            isDirtyRef.current = true;
             return;
           }
         }
         
+        // Check for piece in selection area
         const piece = getPieceAtPosition(x, y);
         if (piece) {
           // If tapping a different piece, switch selection
-          if (boardRef.current.selectedPiece !== piece) {
-            boardRef.current.selectedPiece = piece;
-            boardRef.current.dragPos = { x, y };
-          }
-        } else if (!piece && y < WINDOW_HEIGHT + TITLE_HEIGHT) {
-          // If tapping empty space on board, clear selection
+          boardRef.current.selectedPiece = piece;
+          boardRef.current.dragPos = { x, y };
+          boardRef.current.dragging = true;
+          isDirtyRef.current = true;
+        } else if (!piece && y < WINDOW_HEIGHT + TITLE_HEIGHT && x >= PADDING && x <= WINDOW_WIDTH - PADDING) {
+          // Only clear selection if tapping empty space on the board (not UI elements)
           boardRef.current.selectedPiece = null;
+          isDirtyRef.current = true;
         }
       }
     };
@@ -292,16 +270,18 @@ export default function TetrisGame() {
             if (boardRef.current.checkWin()) {
               boardRef.current.hasWon = true;
             }
+            // Only clear selection if piece was successfully placed
+            boardRef.current.selectedPiece = null;
           }
         }
 
-        if (!piecePlaced && !boardRef.current.availablePieces.includes(boardRef.current.selectedPiece)) {
-          boardRef.current.availablePieces.push(boardRef.current.selectedPiece);
+        const selectedPiece = boardRef.current.selectedPiece;
+        if (!piecePlaced && selectedPiece && !boardRef.current.availablePieces.includes(selectedPiece)) {
+          boardRef.current.availablePieces.push(selectedPiece);
         }
 
-        // Always clear dragging and selection state on touch end
+        // Only clear dragging state and dragPos, maintain selection for rotation
         boardRef.current.dragging = false;
-        boardRef.current.selectedPiece = null;
         boardRef.current.dragPos = null;
         isDirtyRef.current = true;
       }
@@ -462,8 +442,9 @@ export default function TetrisGame() {
 
       // If piece wasn't placed successfully and it wasn't from available pieces,
       // add it back to available pieces
-      if (!piecePlaced && !boardRef.current.availablePieces.includes(boardRef.current.selectedPiece)) {
-        boardRef.current.availablePieces.push(boardRef.current.selectedPiece);
+      const selectedPiece = boardRef.current.selectedPiece;
+      if (!piecePlaced && selectedPiece && !boardRef.current.availablePieces.includes(selectedPiece)) {
+        boardRef.current.availablePieces.push(selectedPiece);
       }
 
       // Always clear dragging and selection state
