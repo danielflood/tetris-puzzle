@@ -117,6 +117,24 @@ export default function TetrisGame() {
       setMousePosition({ x, y });
       isDirtyRef.current = true;
 
+      // Define common button dimensions
+      const buttonPadding = 10;
+      const rotateButtonSize = 40;
+      const resetButtonSize = 40;
+
+      // Check rotate button first if piece is selected
+      if (boardRef.current.selectedPiece) {
+        const rotateButtonX = buttonPadding;
+        const rotateButtonY = buttonPadding;
+        
+        if (x >= rotateButtonX && x <= rotateButtonX + rotateButtonSize &&
+            y >= rotateButtonY && y <= rotateButtonY + rotateButtonSize) {
+          boardRef.current.selectedPiece.rotate();
+          isDirtyRef.current = true;
+          return;
+        }
+      }
+
       // Check if touching scroll bar area
       const scrollBarHeight = 6;
       const scrollBarY = WINDOW_HEIGHT + TITLE_HEIGHT + SELECTION_HEIGHT - scrollBarHeight - 10;
@@ -142,10 +160,8 @@ export default function TetrisGame() {
       }
 
       // Check reset button
-      const resetButtonSize = 40;
-      const resetButtonPadding = 10;
-      const resetButtonX = WINDOW_WIDTH - resetButtonSize - resetButtonPadding;
-      const resetButtonY = resetButtonPadding;
+      const resetButtonX = WINDOW_WIDTH - resetButtonSize - buttonPadding;
+      const resetButtonY = buttonPadding;
       
       if (x >= resetButtonX && x <= resetButtonX + resetButtonSize &&
           y >= resetButtonY && y <= resetButtonY + resetButtonSize) {
@@ -155,21 +171,6 @@ export default function TetrisGame() {
 
       // Rest of the touch handling only if game is not won
       if (!boardRef.current.hasWon) {
-        // Check rotate button if piece is selected
-        if (boardRef.current.selectedPiece) {
-          const rotateButtonSize = 40;
-          const rotateButtonPadding = 10;
-          const rotateButtonX = rotateButtonPadding;
-          const rotateButtonY = resetButtonY;
-          
-          if (x >= rotateButtonX && x <= rotateButtonX + rotateButtonSize &&
-              y >= rotateButtonY && y <= rotateButtonY + rotateButtonSize) {
-            boardRef.current.selectedPiece.rotate();
-            isDirtyRef.current = true;
-            return;
-          }
-        }
-
         // Handle piece selection with tap
         if (y >= TITLE_HEIGHT && y < WINDOW_HEIGHT + TITLE_HEIGHT) {
           const placedPiece = boardRef.current.getPlacedPieceAtPosition(x, y);
@@ -198,13 +199,23 @@ export default function TetrisGame() {
       }
     };
 
-    // Update the touch move handler for iOS
     const handleTouchMove = (e: TouchEvent) => {
       e.preventDefault();
       if (!staticCanvas || boardRef.current.hasWon) return;
 
       const touch = e.touches[0];
       const { x, y } = getCanvasCoordinates(touch.clientX, touch.clientY);
+      
+      // Check if touch started on rotate button
+      const buttonPadding = 10;
+      const rotateButtonSize = 40;
+      const rotateButtonX = buttonPadding;
+      const rotateButtonY = buttonPadding;
+      
+      if (x >= rotateButtonX && x <= rotateButtonX + rotateButtonSize &&
+          y >= rotateButtonY && y <= rotateButtonY + rotateButtonSize) {
+        return; // Don't move piece if touching rotate button
+      }
       
       setMousePosition({ x, y });
       isDirtyRef.current = true;
@@ -215,7 +226,8 @@ export default function TetrisGame() {
         const maxScroll = Math.max(0, totalWidth - WINDOW_WIDTH + 2 * PADDING);
         
         const deltaX = x - scrollStartX;
-        boardRef.current.scrollOffset = Math.max(0, Math.min(maxScroll, scrollStartOffset + deltaX));
+        const scrollSensitivity = 2.5; // Increase scroll speed
+        boardRef.current.scrollOffset = Math.max(0, Math.min(maxScroll, scrollStartOffset + deltaX * scrollSensitivity));
         boardRef.current.targetScroll = boardRef.current.scrollOffset;
         isDirtyRef.current = true;
         return;
