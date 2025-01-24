@@ -13,8 +13,21 @@ import {
   COLORS,
 } from '../utils/constants';
 
+// Add these new interfaces at the top of the file
+interface CanvasLayers {
+  static: HTMLCanvasElement;
+  dynamic: HTMLCanvasElement;
+}
+
+interface CanvasContexts {
+  static: CanvasRenderingContext2D | null;
+  dynamic: CanvasRenderingContext2D | null;
+}
+
 export default function TetrisGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const staticCanvasRef = useRef<HTMLCanvasElement>(null);
+  const dynamicCanvasRef = useRef<HTMLCanvasElement>(null);
   const boardRef = useRef<Board>(new Board());
   const refreshIconRef = useRef<HTMLImageElement | null>(null);
   const rotateIconRef = useRef<HTMLImageElement | null>(null);
@@ -23,22 +36,27 @@ export default function TetrisGame() {
   const [isScrolling, setIsScrolling] = useState(false);
   const [scrollStartX, setScrollStartX] = useState(0);
   const [scrollStartOffset, setScrollStartOffset] = useState(0);
+  const lastRenderRef = useRef<number>(0);
+  const isDirtyRef = useRef<boolean>(true);
 
   useEffect(() => {
     // Detect if we're on mobile
     setIsMobile('ontouchstart' in window);
     
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const staticCanvas = staticCanvasRef.current;
+    const dynamicCanvas = dynamicCanvasRef.current;
+    if (!staticCanvas || !dynamicCanvas) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const staticCtx = staticCanvas.getContext('2d');
+    const dynamicCtx = dynamicCanvas.getContext('2d');
+    if (!staticCtx || !dynamicCtx) return;
 
     // Load refresh icon once
     const refreshIcon = new Image();
     refreshIcon.src = '/refresh.svg';
     refreshIcon.onload = () => {
       refreshIconRef.current = refreshIcon;
+      isDirtyRef.current = true;
     };
 
     // Load rotate icon once
@@ -46,51 +64,58 @@ export default function TetrisGame() {
     rotateIcon.src = '/rotate_piece.svg';
     rotateIcon.onload = () => {
       rotateIconRef.current = rotateIcon;
+      isDirtyRef.current = true;
     };
 
     // Calculate scale based on window size
     const updateScale = () => {
-      if (!canvas) return;
+      if (!staticCanvas || !dynamicCanvas) return;
       
-      const maxHeight = window.innerHeight * 0.95;
-      const maxWidth = window.innerWidth * 0.95;
+      const containerWidth = staticCanvas.parentElement?.clientWidth || window.innerWidth * 0.95;
+      const containerHeight = staticCanvas.parentElement?.clientHeight || window.innerHeight * 0.95;
       
       const gameAspect = WINDOW_WIDTH / (WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT);
-      const containerAspect = maxWidth / maxHeight;
+      const containerAspect = containerWidth / containerHeight;
       
       let newScale;
       if (containerAspect > gameAspect) {
-        newScale = maxHeight / (WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT);
+        newScale = containerHeight / (WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT);
       } else {
-        newScale = maxWidth / WINDOW_WIDTH;
+        newScale = containerWidth / WINDOW_WIDTH;
       }
       
-      canvas.style.width = `${WINDOW_WIDTH * newScale}px`;
-      canvas.style.height = `${(WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT) * newScale}px`;
-      canvas.width = WINDOW_WIDTH;
-      canvas.height = WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT;
+      // Apply scale to both canvases
+      [staticCanvas, dynamicCanvas].forEach(canvas => {
+        canvas.width = WINDOW_WIDTH;
+        canvas.height = WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT;
+        canvas.style.width = `${WINDOW_WIDTH * newScale}px`;
+        canvas.style.height = `${(WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT) * newScale}px`;
+      });
+      
+      isDirtyRef.current = true;
     };
-
-    const board = boardRef.current;
-    updateScale();
 
     // Convert screen coordinates to canvas coordinates
     const getCanvasCoordinates = (clientX: number, clientY: number) => {
-      const rect = canvas.getBoundingClientRect();
+      const rect = staticCanvas.getBoundingClientRect();
+      const scaleX = WINDOW_WIDTH / rect.width;
+      const scaleY = (WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT) / rect.height;
+      
       return {
-        x: (clientX - rect.left) * (canvas.width / rect.width),
-        y: (clientY - rect.top) * (canvas.height / rect.height)
+        x: (clientX - rect.left) * scaleX,
+        y: (clientY - rect.top) * scaleY
       };
     };
 
     const handleTouchStart = (e: TouchEvent) => {
       e.preventDefault(); // Prevent scrolling
-      if (!canvas) return;
+      if (!staticCanvas) return;
 
       const touch = e.touches[0];
       const { x, y } = getCanvasCoordinates(touch.clientX, touch.clientY);
       
       setMousePosition({ x, y });
+      isDirtyRef.current = true;
 
       // Check if touching scroll bar area
       const scrollBarHeight = 6;
@@ -98,12 +123,12 @@ export default function TetrisGame() {
       if (y >= scrollBarY - 10 && y <= scrollBarY + scrollBarHeight + 10) {
         setIsScrolling(true);
         setScrollStartX(x);
-        setScrollStartOffset(board.scrollOffset);
+        setScrollStartOffset(boardRef.current.scrollOffset);
         return;
       }
 
       // If game is won, only allow clicking the reset button
-      if (board.hasWon) {
+      if (boardRef.current.hasWon) {
         const buttonWidth = 120;
         const buttonHeight = 40;
         const buttonX = (WINDOW_WIDTH - buttonWidth) / 2;
@@ -111,7 +136,7 @@ export default function TetrisGame() {
 
         if (x >= buttonX && x <= buttonX + buttonWidth &&
             y >= buttonY && y <= buttonY + buttonHeight) {
-          board.resetBoard();
+          boardRef.current.resetBoard();
         }
         return;
       }
@@ -124,14 +149,14 @@ export default function TetrisGame() {
       
       if (x >= resetButtonX && x <= resetButtonX + resetButtonSize &&
           y >= resetButtonY && y <= resetButtonY + resetButtonSize) {
-        board.resetBoard();
+        boardRef.current.resetBoard();
         return;
       }
 
       // Rest of the touch handling only if game is not won
-      if (!board.hasWon) {
+      if (!boardRef.current.hasWon) {
         // Check rotate button if piece is selected
-        if (board.selectedPiece) {
+        if (boardRef.current.selectedPiece) {
           const rotateButtonSize = 40;
           const rotateButtonPadding = 10;
           const rotateButtonX = rotateButtonPadding;
@@ -139,7 +164,7 @@ export default function TetrisGame() {
           
           if (x >= rotateButtonX && x <= rotateButtonX + rotateButtonSize &&
               y >= rotateButtonY && y <= rotateButtonY + rotateButtonSize) {
-            board.selectedPiece.rotate();
+            boardRef.current.selectedPiece.rotate();
             return;
           }
 
@@ -151,32 +176,32 @@ export default function TetrisGame() {
           if (x >= placeButtonX && x <= placeButtonX + placeButtonSize &&
               y >= placeButtonY && y <= placeButtonY + placeButtonSize) {
             // Try to place the piece at the touch location
-            const adjustedX = x - (board.selectedPiece.width * CELL_SIZE) / 2;
-            const adjustedY = y - (board.selectedPiece.height * CELL_SIZE) / 2;
+            const adjustedX = x - (boardRef.current.selectedPiece.width * CELL_SIZE) / 2;
+            const adjustedY = y - (boardRef.current.selectedPiece.height * CELL_SIZE) / 2;
 
-            if (board.isValidPosition(board.selectedPiece, adjustedX, adjustedY)) {
-              board.placePiece(board.selectedPiece, adjustedX, adjustedY);
-              if (board.availablePieces.includes(board.selectedPiece)) {
-                board.availablePieces = board.availablePieces.filter(
-                  p => p !== board.selectedPiece
+            if (boardRef.current.isValidPosition(boardRef.current.selectedPiece, adjustedX, adjustedY)) {
+              boardRef.current.placePiece(boardRef.current.selectedPiece, adjustedX, adjustedY);
+              if (boardRef.current.availablePieces.includes(boardRef.current.selectedPiece)) {
+                boardRef.current.availablePieces = boardRef.current.availablePieces.filter(
+                  p => p !== boardRef.current.selectedPiece
                 );
               }
 
-              if (board.checkWin()) {
-                board.hasWon = true;
+              if (boardRef.current.checkWin()) {
+                boardRef.current.hasWon = true;
               }
             }
-            board.selectedPiece = null;
+            boardRef.current.selectedPiece = null;
             return;
           }
         }
 
         // Handle piece selection with tap
         if (y >= TITLE_HEIGHT && y < WINDOW_HEIGHT + TITLE_HEIGHT) {
-          const placedPiece = board.getPlacedPieceAtPosition(x, y);
+          const placedPiece = boardRef.current.getPlacedPieceAtPosition(x, y);
           if (placedPiece) {
-            board.selectedPiece = placedPiece;
-            board.dragPos = { x, y };
+            boardRef.current.selectedPiece = placedPiece;
+            boardRef.current.dragPos = { x, y };
             return;
           }
         }
@@ -184,57 +209,51 @@ export default function TetrisGame() {
         const piece = getPieceAtPosition(x, y);
         if (piece) {
           // If tapping a different piece, switch selection
-          if (board.selectedPiece !== piece) {
-            board.selectedPiece = piece;
-            board.dragPos = { x, y };
+          if (boardRef.current.selectedPiece !== piece) {
+            boardRef.current.selectedPiece = piece;
+            boardRef.current.dragPos = { x, y };
           }
         } else if (!piece && y < WINDOW_HEIGHT + TITLE_HEIGHT) {
           // If tapping empty space on board, clear selection
-          board.selectedPiece = null;
+          boardRef.current.selectedPiece = null;
         }
       }
     };
 
+    // Update the touch move handler for iOS
     const handleTouchMove = (e: TouchEvent) => {
       e.preventDefault();
-      if (!canvas || board.hasWon) return;
+      if (!staticCanvas || boardRef.current.hasWon) return;
 
       const touch = e.touches[0];
       const { x, y } = getCanvasCoordinates(touch.clientX, touch.clientY);
       
       setMousePosition({ x, y });
+      isDirtyRef.current = true;
       
       if (isScrolling) {
-        const totalWidth = board.availablePieces.reduce((width, piece) =>
+        const totalWidth = boardRef.current.availablePieces.reduce((width, piece) =>
           width + (piece.width + 1) * CELL_SIZE, 0) - CELL_SIZE;
         const maxScroll = Math.max(0, totalWidth - WINDOW_WIDTH + 2 * PADDING);
-        const scrollableWidth = WINDOW_WIDTH - 2 * PADDING;
         
         const deltaX = x - scrollStartX;
-        const scrollDelta = (deltaX / scrollableWidth) * totalWidth;
-        board.targetScroll = Math.max(0, Math.min(maxScroll, scrollStartOffset + scrollDelta));
+        boardRef.current.scrollOffset = Math.max(0, Math.min(maxScroll, scrollStartOffset + deltaX));
+        boardRef.current.targetScroll = boardRef.current.scrollOffset;
+        isDirtyRef.current = true;
         return;
       }
       
-      if (board.selectedPiece) {
-        // Start dragging on move if we have a selected piece
-        board.dragging = true;
-        board.dragPos = { x, y };
-      } else if (y >= WINDOW_HEIGHT + TITLE_HEIGHT) {
-        // Scrolling available pieces area
-        const deltaX = touch.clientX - e.touches[0].clientX;
-        board.targetScroll = Math.max(0, board.targetScroll + deltaX);
-        
-        const totalWidth = board.availablePieces.reduce((width, piece) =>
-          width + (piece.width + 1) * CELL_SIZE, 0) - CELL_SIZE;
-        const maxScroll = Math.max(0, totalWidth - WINDOW_WIDTH + 2 * PADDING);
-        board.targetScroll = Math.min(board.targetScroll, maxScroll);
+      if (boardRef.current.selectedPiece) {
+        // Ensure we maintain the piece reference on iOS
+        boardRef.current.dragging = true;
+        boardRef.current.dragPos = { x, y };
+        isDirtyRef.current = true;
       }
     };
 
     const handleTouchEnd = (e: TouchEvent) => {
       e.preventDefault();
-      if (!canvas || board.hasWon) return;
+      if (!staticCanvas || boardRef.current.hasWon) return;
 
       if (isScrolling) {
         setIsScrolling(false);
@@ -244,66 +263,119 @@ export default function TetrisGame() {
       const touch = e.changedTouches[0];
       const { x, y } = getCanvasCoordinates(touch.clientX, touch.clientY);
 
-      if (board.selectedPiece && board.dragging) {
+      if (boardRef.current.selectedPiece && boardRef.current.dragging) {
         let piecePlaced = false;
         
         if (y >= TITLE_HEIGHT && y < WINDOW_HEIGHT + TITLE_HEIGHT) {
-          const adjustedX = x - (board.selectedPiece.width * CELL_SIZE) / 2;
-          const adjustedY = y - (board.selectedPiece.height * CELL_SIZE) / 2;
+          const pieceWidth = boardRef.current.selectedPiece.width * CELL_SIZE;
+          const pieceHeight = boardRef.current.selectedPiece.height * CELL_SIZE;
+          const gridX = Math.floor((x - PADDING - pieceWidth/2) / CELL_SIZE);
+          const gridY = Math.floor((y - TITLE_HEIGHT - pieceHeight/2) / CELL_SIZE);
+          const snapX = gridX * CELL_SIZE + PADDING;
+          const snapY = gridY * CELL_SIZE + TITLE_HEIGHT;
 
-          if (board.isValidPosition(board.selectedPiece, adjustedX, adjustedY)) {
-            board.placePiece(board.selectedPiece, adjustedX, adjustedY);
-            if (board.availablePieces.includes(board.selectedPiece)) {
-              board.availablePieces = board.availablePieces.filter(
-                p => p !== board.selectedPiece
+          if (boardRef.current.isValidPosition(boardRef.current.selectedPiece, snapX, snapY)) {
+            boardRef.current.placePiece(boardRef.current.selectedPiece, snapX, snapY);
+            if (boardRef.current.availablePieces.includes(boardRef.current.selectedPiece)) {
+              boardRef.current.availablePieces = boardRef.current.availablePieces.filter(
+                p => p !== boardRef.current.selectedPiece
               );
+              // Adjust scroll position when a piece is removed
+              const totalWidth = boardRef.current.availablePieces.reduce((width, piece) =>
+                width + (piece.width + 1) * CELL_SIZE, 0) - CELL_SIZE;
+              const maxScroll = Math.max(0, totalWidth - WINDOW_WIDTH + 2 * PADDING);
+              boardRef.current.scrollOffset = Math.min(boardRef.current.scrollOffset, maxScroll);
+              boardRef.current.targetScroll = boardRef.current.scrollOffset;
             }
             piecePlaced = true;
 
-            if (board.checkWin()) {
-              board.hasWon = true;
+            if (boardRef.current.checkWin()) {
+              boardRef.current.hasWon = true;
             }
           }
         }
 
-        if (!piecePlaced && !board.availablePieces.includes(board.selectedPiece)) {
-          board.availablePieces.push(board.selectedPiece);
+        if (!piecePlaced && !boardRef.current.availablePieces.includes(boardRef.current.selectedPiece)) {
+          boardRef.current.availablePieces.push(boardRef.current.selectedPiece);
         }
 
-        // Only clear selection if we successfully placed the piece
-        if (piecePlaced) {
-          board.selectedPiece = null;
-        }
-        board.dragging = false;
+        // Always clear dragging and selection state on touch end
+        boardRef.current.dragging = false;
+        boardRef.current.selectedPiece = null;
+        boardRef.current.dragPos = null;
+        isDirtyRef.current = true;
       }
     };
 
-    // Add touch event listeners
-    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
-    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
-    canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
-
-    // Setup event listeners
-    const handleMouseDown = (e: MouseEvent) => {
-      if (!canvas) return;
+    // Game loop with optimized rendering
+    const render = (timestamp: number) => {
+      const delta = timestamp - lastRenderRef.current;
+      const fps = 60;
+      const frameInterval = 1000 / fps;
       
-      const rect = canvas.getBoundingClientRect();
-      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      if (delta >= frameInterval) {
+        if (isDirtyRef.current) {
+          // Clear both canvases
+          staticCtx.clearRect(0, 0, staticCanvas.width, staticCanvas.height);
+          dynamicCtx.clearRect(0, 0, dynamicCanvas.width, dynamicCanvas.height);
+
+          // Draw static elements (board, UI) on static canvas
+          drawStaticElements(staticCtx, boardRef.current, refreshIconRef.current, rotateIconRef.current);
+          
+          // Draw dynamic elements (dragged pieces, hover effects) on dynamic canvas
+          drawDynamicElements(dynamicCtx, boardRef.current, mousePosition);
+          
+          isDirtyRef.current = false;
+        }
+        lastRenderRef.current = timestamp - (delta % frameInterval);
+      }
+      
+      animationFrameId = requestAnimationFrame(render);
+    };
+
+    let animationFrameId = requestAnimationFrame(render);
+
+    // Add event listeners
+    window.addEventListener('resize', updateScale);
+
+    // Mouse event handlers
+    const handleMouseDown = (e: MouseEvent) => {
+      if (!staticCanvas) return;
+      
+      const { x, y } = getCanvasCoordinates(e.clientX, e.clientY);
+      setMousePosition({ x, y });
+      isDirtyRef.current = true;
+
+      // Handle right click rotation while dragging
+      if (e.button === 2) {
+        e.preventDefault();
+        if (boardRef.current.dragging && boardRef.current.selectedPiece) {
+          boardRef.current.selectedPiece.rotate();
+          isDirtyRef.current = true;
+          return;
+        }
+        // Try to get piece at clicked position and rotate it (no picking up)
+        const piece = getPieceAtPosition(x, y);
+        if (piece) {
+          piece.rotate();
+          isDirtyRef.current = true;
+        }
+        return;
+      }
       
       // Check if reset button was clicked (before win check)
-      const resetButtonSize = 30;
+      const resetButtonSize = 40;
       const resetButtonPadding = 10;
       const resetButtonX = WINDOW_WIDTH - resetButtonSize - resetButtonPadding;
       const resetButtonY = resetButtonPadding;
       
       if (x >= resetButtonX && x <= resetButtonX + resetButtonSize &&
           y >= resetButtonY && y <= resetButtonY + resetButtonSize) {
-        board.resetBoard();
+        boardRef.current.resetBoard();
         return;
       }
       
-      if (board.hasWon) {
+      if (boardRef.current.hasWon) {
         // Check if reset button was clicked
         const buttonWidth = 120;
         const buttonHeight = 40;
@@ -312,7 +384,7 @@ export default function TetrisGame() {
 
         if (x >= buttonX && x <= buttonX + buttonWidth &&
             y >= buttonY && y <= buttonY + buttonHeight) {
-          board.resetBoard();
+          boardRef.current.resetBoard();
         }
         return;
       }
@@ -320,147 +392,137 @@ export default function TetrisGame() {
       if (e.button === 0) { // Left click
         // First try to pick up a placed piece from the board
         if (y >= TITLE_HEIGHT && y < WINDOW_HEIGHT + TITLE_HEIGHT) {
-          const placedPiece = board.getPlacedPieceAtPosition(x, y);
+          const placedPiece = boardRef.current.getPlacedPieceAtPosition(x, y);
           if (placedPiece) {
-            board.selectedPiece = placedPiece;
-            board.dragging = true;
-            board.dragPos = { x, y };
+            boardRef.current.selectedPiece = placedPiece;
+            boardRef.current.dragging = true;
+            boardRef.current.dragPos = { x, y };
+            isDirtyRef.current = true;
             return;
           }
         }
         
         // If no placed piece was clicked, try to select from available pieces
         const piece = getPieceAtPosition(x, y);
-        if (piece && !board.hasWon) {
-          board.selectedPiece = piece;
-          board.dragging = true;
-          board.dragPos = { x, y };
-        }
-      } else if (e.button === 2) { // Right click
-        // If already dragging, just rotate the piece
-        if (board.dragging && board.selectedPiece) {
-          const currentCenterX = board.dragPos!.x;
-          const currentCenterY = board.dragPos!.y;
-          board.selectedPiece.rotate();
-          board.dragPos = { x: currentCenterX, y: currentCenterY };
-          return;
-        }
-
-        // Try to get piece at clicked position and rotate it (no picking up)
-        const piece = getPieceAtPosition(x, y);
-        if (piece) {
-          piece.rotate();
+        if (piece && !boardRef.current.hasWon) {
+          boardRef.current.selectedPiece = piece;
+          boardRef.current.dragging = true;
+          boardRef.current.dragPos = { x, y };
+          isDirtyRef.current = true;
         }
       }
     };
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (!canvas) return;
+      if (!staticCanvas || !boardRef.current.dragging) return;
       
-      const rect = canvas.getBoundingClientRect();
-      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
-      
+      const { x, y } = getCanvasCoordinates(e.clientX, e.clientY);
       setMousePosition({ x, y });
-      
-      if (board.dragging) {
-        board.dragPos = { x, y };
-      }
+      boardRef.current.dragPos = { x, y };
+      isDirtyRef.current = true;
     };
 
     const handleMouseUp = (e: MouseEvent) => {
-      // Only process left mouse button releases
-      if (!canvas || !board.dragging || board.hasWon || e.button !== 0) return;
+      // Only handle left mouse button releases
+      if (e.button !== 0) return;
+      if (!staticCanvas || !boardRef.current.dragging || !boardRef.current.selectedPiece || boardRef.current.hasWon) return;
       
-      const rect = canvas.getBoundingClientRect();
-      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      const { x, y } = getCanvasCoordinates(e.clientX, e.clientY);
+      let piecePlaced = false;
       
-      if (board.selectedPiece) {
-        let piecePlaced = false;
-        
-        // Try to place piece on board
-        if (y >= TITLE_HEIGHT && y < WINDOW_HEIGHT + TITLE_HEIGHT) {
-          const adjustedX = x - (board.selectedPiece.width * CELL_SIZE) / 2;
-          const adjustedY = y - (board.selectedPiece.height * CELL_SIZE) / 2;
+      // Try to place piece on board
+      if (y >= TITLE_HEIGHT && y < WINDOW_HEIGHT + TITLE_HEIGHT) {
+        const pieceWidth = boardRef.current.selectedPiece.width * CELL_SIZE;
+        const pieceHeight = boardRef.current.selectedPiece.height * CELL_SIZE;
+        const gridX = Math.floor((x - PADDING - pieceWidth/2) / CELL_SIZE);
+        const gridY = Math.floor((y - TITLE_HEIGHT - pieceHeight/2) / CELL_SIZE);
+        const snapX = gridX * CELL_SIZE + PADDING;
+        const snapY = gridY * CELL_SIZE + TITLE_HEIGHT;
 
-          if (board.isValidPosition(board.selectedPiece, adjustedX, adjustedY)) {
-            board.placePiece(board.selectedPiece, adjustedX, adjustedY);
-            // Only remove from available pieces if it was originally from there
-            if (board.availablePieces.includes(board.selectedPiece)) {
-              board.availablePieces = board.availablePieces.filter(
-                p => p !== board.selectedPiece
-              );
-            }
-            piecePlaced = true;
+        if (boardRef.current.isValidPosition(boardRef.current.selectedPiece, snapX, snapY)) {
+          boardRef.current.placePiece(boardRef.current.selectedPiece, snapX, snapY);
+          if (boardRef.current.availablePieces.includes(boardRef.current.selectedPiece)) {
+            boardRef.current.availablePieces = boardRef.current.availablePieces.filter(
+              p => p !== boardRef.current.selectedPiece
+            );
+            // Adjust scroll position when a piece is removed
+            const totalWidth = boardRef.current.availablePieces.reduce((width, piece) =>
+              width + (piece.width + 1) * CELL_SIZE, 0) - CELL_SIZE;
+            const maxScroll = Math.max(0, totalWidth - WINDOW_WIDTH + 2 * PADDING);
+            boardRef.current.scrollOffset = Math.min(boardRef.current.scrollOffset, maxScroll);
+            boardRef.current.targetScroll = boardRef.current.scrollOffset;
+          }
+          piecePlaced = true;
 
-            if (board.checkWin()) {
-              board.hasWon = true;
-            }
+          if (boardRef.current.checkWin()) {
+            boardRef.current.hasWon = true;
           }
         }
-
-        // If piece wasn't placed successfully and it wasn't from available pieces,
-        // add it back to available pieces
-        if (!piecePlaced && !board.availablePieces.includes(board.selectedPiece)) {
-          board.availablePieces.push(board.selectedPiece);
-        }
-
-        board.dragging = false;
-        board.selectedPiece = null;
       }
+
+      // If piece wasn't placed successfully and it wasn't from available pieces,
+      // add it back to available pieces
+      if (!piecePlaced && !boardRef.current.availablePieces.includes(boardRef.current.selectedPiece)) {
+        boardRef.current.availablePieces.push(boardRef.current.selectedPiece);
+      }
+
+      // Always clear dragging and selection state
+      boardRef.current.dragging = false;
+      boardRef.current.selectedPiece = null;
+      boardRef.current.dragPos = null;
+      isDirtyRef.current = true;
     };
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
-      if (!board.dragging && !board.hasWon) {
+      if (!boardRef.current.dragging && !boardRef.current.hasWon) {
+        const totalWidth = boardRef.current.availablePieces.reduce((width, piece) =>
+          width + (piece.width + 1) * CELL_SIZE, 0) - CELL_SIZE;
+        const maxScroll = Math.max(0, totalWidth - WINDOW_WIDTH + 2 * PADDING);
+        
         if (e.deltaY < 0) {
-          board.targetScroll = Math.max(0, board.targetScroll - CELL_SIZE * 2);
+          boardRef.current.scrollOffset = Math.max(0, boardRef.current.scrollOffset - CELL_SIZE * 2);
         } else {
-          const totalWidth = board.availablePieces.reduce((width, piece) =>
-            width + (piece.width + 1) * CELL_SIZE, 0) - CELL_SIZE;
-          const maxScroll = Math.max(0, totalWidth - WINDOW_WIDTH + 2 * PADDING);
-          board.targetScroll = Math.min(board.targetScroll + CELL_SIZE * 2, maxScroll);
+          boardRef.current.scrollOffset = Math.min(boardRef.current.scrollOffset + CELL_SIZE * 2, maxScroll);
         }
+        boardRef.current.targetScroll = boardRef.current.scrollOffset;
+        isDirtyRef.current = true;
       }
     };
 
-    // Add event listeners
-    window.addEventListener('resize', updateScale);
-    canvas.addEventListener('mousedown', handleMouseDown);
-    canvas.addEventListener('mousemove', handleMouseMove);
-    canvas.addEventListener('mouseup', handleMouseUp);
-    canvas.addEventListener('wheel', handleWheel);
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-
-    // Game loop with performance optimization
-    let lastRender = 0;
-    const fps = 60;
-    const frameInterval = 1000 / fps;
-
-    const render = (timestamp: number) => {
-      const delta = timestamp - lastRender;
-      
-      if (delta >= frameInterval) {
-        drawGame(ctx, board, mousePosition, refreshIconRef.current, rotateIconRef.current);
-        lastRender = timestamp - (delta % frameInterval);
-      }
-      
-      animationFrameId = requestAnimationFrame(render);
-    };
-
-    let animationFrameId = requestAnimationFrame(render);
+    // Add event listeners to both canvases
+    [staticCanvas, dynamicCanvas].forEach(canvas => {
+      canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+      canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+      canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+      canvas.addEventListener('mousedown', handleMouseDown);
+      canvas.addEventListener('mousemove', handleMouseMove);
+      canvas.addEventListener('mouseup', handleMouseUp);
+      canvas.addEventListener('wheel', handleWheel, { passive: false });
+      canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    });
+    
+    // Add global mouse up handler
+    window.addEventListener('mouseup', handleMouseUp);
+    
+    updateScale();
 
     return () => {
       window.removeEventListener('resize', updateScale);
-      canvas.removeEventListener('mousedown', handleMouseDown);
-      canvas.removeEventListener('mousemove', handleMouseMove);
-      canvas.removeEventListener('mouseup', handleMouseUp);
-      canvas.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('mouseup', handleMouseUp);
+      
+      [staticCanvas, dynamicCanvas].forEach(canvas => {
+        canvas.removeEventListener('touchstart', handleTouchStart);
+        canvas.removeEventListener('touchmove', handleTouchMove);
+        canvas.removeEventListener('touchend', handleTouchEnd);
+        canvas.removeEventListener('mousedown', handleMouseDown);
+        canvas.removeEventListener('mousemove', handleMouseMove);
+        canvas.removeEventListener('mouseup', handleMouseUp);
+        canvas.removeEventListener('wheel', handleWheel);
+        canvas.removeEventListener('contextmenu', (e) => e.preventDefault());
+      });
+      
       cancelAnimationFrame(animationFrameId);
-      canvas.removeEventListener('touchstart', handleTouchStart);
-      canvas.removeEventListener('touchmove', handleTouchMove);
-      canvas.removeEventListener('touchend', handleTouchEnd);
     };
   }, [mousePosition]);
 
@@ -491,25 +553,42 @@ export default function TetrisGame() {
   };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center">
-      <canvas
-        ref={canvasRef}
-        width={WINDOW_WIDTH}
-        height={WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}
-        className="max-h-[95vh] max-w-[95vw] border-2 border-gray-700 rounded-lg shadow-lg touch-none"
-        style={{ 
-          aspectRatio: `${WINDOW_WIDTH}/${WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}`,
-          height: 'auto'
-        }}
-      />
+    <div className="fixed inset-0 flex items-center justify-center bg-gray-900">
+      <div className="relative w-full h-full flex items-center justify-center">
+        <div 
+          className="relative" 
+          style={{ 
+            width: `${WINDOW_WIDTH}px`,
+            height: `${WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}px`,
+            maxWidth: '95vw',
+            maxHeight: '95vh'
+          }}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <canvas
+            ref={staticCanvasRef}
+            width={WINDOW_WIDTH}
+            height={WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}
+            className="absolute inset-0 w-full h-full border-2 border-gray-700 rounded-lg shadow-lg touch-none"
+            onContextMenu={(e) => e.preventDefault()}
+          />
+          <canvas
+            ref={dynamicCanvasRef}
+            width={WINDOW_WIDTH}
+            height={WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}
+            className="absolute inset-0 w-full h-full touch-none"
+            onContextMenu={(e) => e.preventDefault()}
+          />
+        </div>
+      </div>
     </div>
   );
 }
 
-function drawGame(
-  ctx: CanvasRenderingContext2D, 
+// Split the drawing functions
+function drawStaticElements(
+  ctx: CanvasRenderingContext2D,
   board: Board,
-  mousePosition: { x: number, y: number } | null,
   refreshIcon: HTMLImageElement | null,
   rotateIcon: HTMLImageElement | null
 ) {
@@ -517,13 +596,13 @@ function drawGame(
   ctx.fillStyle = COLORS.BG_COLOR;
   ctx.fillRect(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT);
 
-  // Draw reset button in top-right corner with increased size
-  const resetButtonSize = 40; // Increased size for touch
+  // Draw reset button in top-right corner
+  const resetButtonSize = 40;
   const resetButtonPadding = 10;
   const resetButtonX = WINDOW_WIDTH - resetButtonSize - resetButtonPadding;
   const resetButtonY = resetButtonPadding;
 
-  // Draw circular background
+  // Draw circular background for reset button
   ctx.fillStyle = COLORS.BUTTON_COLOR;
   ctx.beginPath();
   ctx.arc(resetButtonX + resetButtonSize/2, resetButtonY + resetButtonSize/2, resetButtonSize/2, 0, Math.PI * 2);
@@ -549,7 +628,7 @@ function drawGame(
   ctx.textAlign = 'center';
   ctx.fillText('TETRIS', WINDOW_WIDTH / 2, TITLE_HEIGHT / 2 + 15);
 
-  // Draw board grid
+  // Draw board grid and placed pieces
   for (let row = 0; row < board.grid.length; row++) {
     for (let col = 0; col < board.grid[0].length; col++) {
       const x = col * CELL_SIZE + PADDING;
@@ -566,7 +645,7 @@ function drawGame(
     }
   }
 
-  // Draw selection area
+  // Draw selection area background
   ctx.fillStyle = '#282828';
   ctx.fillRect(0, WINDOW_HEIGHT + TITLE_HEIGHT, WINDOW_WIDTH, SELECTION_HEIGHT);
   ctx.strokeStyle = COLORS.GRID_COLOR;
@@ -576,48 +655,13 @@ function drawGame(
   ctx.lineTo(WINDOW_WIDTH, WINDOW_HEIGHT + TITLE_HEIGHT);
   ctx.stroke();
 
-  // Draw available pieces
+  // Draw available pieces (if not being dragged)
   let pieceX = PADDING - board.scrollOffset;
   for (const piece of board.availablePieces) {
     if (piece !== board.selectedPiece || !board.dragging) {
       drawPieceInSelection(ctx, piece, pieceX, board);
     }
     pieceX += (piece.width + 1) * CELL_SIZE;
-  }
-
-  // Draw scroll bar for mobile
-  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
-    const scrollBarHeight = 6;
-    const scrollBarY = WINDOW_HEIGHT + TITLE_HEIGHT + SELECTION_HEIGHT - scrollBarHeight - 10;
-    const totalWidth = board.availablePieces.reduce((width, piece) =>
-      width + (piece.width + 1) * CELL_SIZE, 0) - CELL_SIZE;
-    
-    // Draw scroll bar background
-    ctx.fillStyle = '#444444';
-    ctx.fillRect(PADDING, scrollBarY, WINDOW_WIDTH - 2 * PADDING, scrollBarHeight);
-    
-    // Calculate and draw scroll handle
-    const maxScroll = Math.max(0, totalWidth - WINDOW_WIDTH + 2 * PADDING);
-    if (maxScroll > 0) {
-      const handleWidth = Math.max(40, (WINDOW_WIDTH - 2 * PADDING) * (WINDOW_WIDTH / totalWidth));
-      const scrollProgress = board.scrollOffset / maxScroll;
-      const handleX = PADDING + scrollProgress * ((WINDOW_WIDTH - 2 * PADDING) - handleWidth);
-      
-      ctx.fillStyle = '#888888';
-      ctx.beginPath();
-      ctx.roundRect(handleX, scrollBarY, handleWidth, scrollBarHeight, 3);
-      ctx.fill();
-    }
-  }
-
-  // Draw dragged piece
-  if (board.dragging && board.selectedPiece && board.dragPos) {
-    drawDraggedPiece(ctx, board);
-  }
-
-  // Draw win message
-  if (board.hasWon) {
-    drawWinMessage(ctx);
   }
 
   // Draw rotate button when a piece is selected (on mobile)
@@ -648,8 +692,134 @@ function drawGame(
     }
   }
 
-  // Update scroll
-  board.updateScroll();
+  // Draw scroll bar for mobile
+  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+    const scrollBarHeight = 6;
+    const scrollBarY = WINDOW_HEIGHT + TITLE_HEIGHT + SELECTION_HEIGHT - scrollBarHeight - 10;
+    const totalWidth = board.availablePieces.reduce((width, piece) =>
+      width + (piece.width + 1) * CELL_SIZE, 0) - CELL_SIZE;
+    
+    // Draw scroll bar background
+    ctx.fillStyle = '#444444';
+    ctx.fillRect(PADDING, scrollBarY, WINDOW_WIDTH - 2 * PADDING, scrollBarHeight);
+    
+    // Calculate and draw scroll handle
+    const maxScroll = Math.max(0, totalWidth - WINDOW_WIDTH + 2 * PADDING);
+    if (maxScroll > 0) {
+      const handleWidth = Math.max(40, (WINDOW_WIDTH - 2 * PADDING) * (WINDOW_WIDTH / totalWidth));
+      const scrollProgress = board.scrollOffset / maxScroll;
+      const handleX = PADDING + scrollProgress * ((WINDOW_WIDTH - 2 * PADDING) - handleWidth);
+      
+      ctx.fillStyle = '#888888';
+      ctx.beginPath();
+      ctx.roundRect(handleX, scrollBarY, handleWidth, scrollBarHeight, 3);
+      ctx.fill();
+    }
+  }
+}
+
+function drawDynamicElements(
+  ctx: CanvasRenderingContext2D,
+  board: Board,
+  mousePosition: { x: number, y: number } | null
+) {
+  // Draw dragged piece
+  if (board.dragging && board.selectedPiece && board.dragPos) {
+    const { x: mouseX, y: mouseY } = board.dragPos;
+    const pieceWidth = board.selectedPiece.width * CELL_SIZE;
+    const pieceHeight = board.selectedPiece.height * CELL_SIZE;
+    
+    // Calculate the exact position to center the piece on the cursor
+    const startX = Math.round(mouseX - pieceWidth / 2);
+    const startY = Math.round(mouseY - pieceHeight / 2);
+
+    // Define board boundaries
+    const boardLeft = PADDING;
+    const boardRight = WINDOW_WIDTH - PADDING;
+    const boardTop = TITLE_HEIGHT;
+    const boardBottom = TITLE_HEIGHT + WINDOW_HEIGHT;
+
+    // Check if mouse is within board boundaries
+    const isOverBoard = (
+      mouseY >= boardTop && mouseY <= boardBottom &&
+      mouseX >= boardLeft && mouseX <= boardRight
+    );
+
+    // Draw the dragged piece with transparency
+    ctx.globalAlpha = 0.7;
+    for (let row = 0; row < board.selectedPiece.height; row++) {
+      for (let col = 0; col < board.selectedPiece.width; col++) {
+        if (board.selectedPiece.shape[row][col]) {
+          const x = Math.round(startX + col * CELL_SIZE);
+          const y = Math.round(startY + row * CELL_SIZE);
+          ctx.fillStyle = board.selectedPiece.color;
+          ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+          ctx.strokeStyle = COLORS.GRID_COLOR;
+          ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
+        }
+      }
+    }
+    ctx.globalAlpha = 1.0;
+
+    // Draw preview on board
+    if (isOverBoard) {
+      const gridX = Math.floor((mouseX - PADDING - pieceWidth/2) / CELL_SIZE);
+      const gridY = Math.floor((mouseY - TITLE_HEIGHT - pieceHeight/2) / CELL_SIZE);
+      const snapX = gridX * CELL_SIZE + PADDING;
+      const snapY = gridY * CELL_SIZE + TITLE_HEIGHT;
+      
+      const isValid = board.isValidPosition(board.selectedPiece, snapX, snapY);
+
+      ctx.strokeStyle = isValid ? '#00FF00' : '#FF0000';
+      ctx.lineWidth = 2;
+
+      for (let row = 0; row < board.selectedPiece.height; row++) {
+        for (let col = 0; col < board.selectedPiece.width; col++) {
+          if (board.selectedPiece.shape[row][col]) {
+            const x = gridX * CELL_SIZE + PADDING + col * CELL_SIZE;
+            const y = gridY * CELL_SIZE + TITLE_HEIGHT + row * CELL_SIZE;
+            if (x >= boardLeft && x < boardRight && y >= boardTop && y < boardBottom) {
+              ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Draw win message if game is won
+  if (board.hasWon) {
+    // Create semi-transparent overlay
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT);
+
+    // Draw win message
+    ctx.font = '32px Arial';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'center';
+    ctx.fillText('Puzzle Complete!',
+      WINDOW_WIDTH / 2,
+      (WINDOW_HEIGHT + TITLE_HEIGHT) / 2 - 20);
+
+    // Draw reset button
+    const buttonWidth = 120;
+    const buttonHeight = 40;
+    const buttonX = (WINDOW_WIDTH - buttonWidth) / 2;
+    const buttonY = (WINDOW_HEIGHT + TITLE_HEIGHT) / 2 + 20;
+
+    // Draw button background
+    ctx.fillStyle = COLORS.BUTTON_COLOR;
+    ctx.beginPath();
+    ctx.roundRect(buttonX, buttonY, buttonWidth, buttonHeight, 8);
+    ctx.fill();
+
+    // Draw button text
+    ctx.font = '20px Arial';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText('Reset Game', 
+      WINDOW_WIDTH / 2,
+      buttonY + buttonHeight/2 + 6);
+  }
 }
 
 function drawPieceInSelection(ctx: CanvasRenderingContext2D, piece: Piece, x: number, board: Board) {
@@ -681,99 +851,6 @@ function drawPieceInSelection(ctx: CanvasRenderingContext2D, piece: Piece, x: nu
       }
     }
   }
-}
-
-function drawDraggedPiece(ctx: CanvasRenderingContext2D, board: Board) {
-  if (!board.selectedPiece || !board.dragPos) return;
-
-  const { x: mouseX, y: mouseY } = board.dragPos;
-  const pieceWidth = board.selectedPiece.width * CELL_SIZE;
-  const pieceHeight = board.selectedPiece.height * CELL_SIZE;
-  
-  // Calculate the exact position to center the piece on the cursor
-  const startX = Math.round(mouseX - pieceWidth / 2);
-  const startY = Math.round(mouseY - pieceHeight / 2);
-
-  // Define board boundaries
-  const boardLeft = PADDING;
-  const boardRight = PADDING + WINDOW_WIDTH;
-  const boardTop = TITLE_HEIGHT;
-  const boardBottom = TITLE_HEIGHT + WINDOW_HEIGHT;
-
-  // Check if mouse is within board boundaries
-  const isOverBoard = (
-    boardLeft <= mouseX && mouseX <= boardRight &&
-    boardTop <= mouseY && mouseY <= boardBottom
-  );
-
-  // Draw the dragged piece with transparency and brightened color
-  ctx.globalAlpha = 0.5;
-  for (let row = 0; row < board.selectedPiece.height; row++) {
-    for (let col = 0; col < board.selectedPiece.width; col++) {
-      if (board.selectedPiece.shape[row][col]) {
-        const x = Math.round(startX + col * CELL_SIZE);
-        const y = Math.round(startY + row * CELL_SIZE);
-        ctx.fillStyle = adjustBrightness(board.selectedPiece.color, 1.3);
-        ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
-      }
-    }
-  }
-  ctx.globalAlpha = 1.0;
-
-  // Draw preview on board
-  if (isOverBoard) {
-    const gridX = Math.floor((startX - PADDING) / CELL_SIZE);
-    const gridY = Math.floor((startY - TITLE_HEIGHT) / CELL_SIZE);
-    const isValid = board.isValidPosition(board.selectedPiece, startX, startY);
-
-    ctx.strokeStyle = isValid ? '#00FF00' : '#FF0000';
-    ctx.lineWidth = 2;
-
-    for (let row = 0; row < board.selectedPiece.height; row++) {
-      for (let col = 0; col < board.selectedPiece.width; col++) {
-        if (board.selectedPiece.shape[row][col]) {
-          const x = (gridX + col) * CELL_SIZE + PADDING;
-          const y = (gridY + row) * CELL_SIZE + TITLE_HEIGHT;
-          if (x >= boardLeft && x < boardRight && y >= boardTop && y < boardBottom) {
-            ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
-          }
-        }
-      }
-    }
-  }
-}
-
-function drawWinMessage(ctx: CanvasRenderingContext2D) {
-  // Create semi-transparent overlay
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-  ctx.fillRect(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT);
-
-  // Draw win message
-  ctx.font = '32px Arial';
-  ctx.fillStyle = '#FFFFFF';
-  ctx.textAlign = 'center';
-  ctx.fillText('Puzzle Complete!',
-    WINDOW_WIDTH / 2,
-    (WINDOW_HEIGHT + TITLE_HEIGHT) / 2 - 20);
-
-  // Draw reset button
-  const buttonWidth = 120;
-  const buttonHeight = 40;
-  const buttonX = (WINDOW_WIDTH - buttonWidth) / 2;
-  const buttonY = (WINDOW_HEIGHT + TITLE_HEIGHT) / 2 + 20;
-
-  // Draw button background
-  ctx.fillStyle = COLORS.BUTTON_COLOR;
-  ctx.beginPath();
-  ctx.roundRect(buttonX, buttonY, buttonWidth, buttonHeight, 8);
-  ctx.fill();
-
-  // Draw button text
-  ctx.font = '20px Arial';
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillText('Reset Game', 
-    WINDOW_WIDTH / 2,
-    buttonY + buttonHeight/2 + 6);
 }
 
 function adjustBrightness(color: string, factor: number): string {
