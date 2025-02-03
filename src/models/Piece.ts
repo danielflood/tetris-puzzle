@@ -4,21 +4,26 @@ export type PieceShape = number[][];
 export type PieceColor = string;
 
 export class Piece {
-  shape: PieceShape;
-  color: PieceColor;
+  shape: boolean[][];
+  color: string;
   width: number;
   height: number;
+  x: number;
+  y: number;
 
   constructor(shape: PieceShape, color: PieceColor) {
-    this.shape = shape;
+    // Convert number[][] to boolean[][]
+    this.shape = shape.map(row => row.map(cell => Boolean(cell)));
     this.color = color;
     this.width = shape[0].length;
     this.height = shape.length;
+    this.x = 0;
+    this.y = 0;
   }
 
   rotate(): void {
     // Create a new rotated shape matrix
-    const newShape = Array(this.width).fill(null).map(() => Array(this.height).fill(0));
+    const newShape = Array(this.width).fill(null).map(() => Array(this.height).fill(false));
     
     // Perform rotation
     for (let row = 0; row < this.height; row++) {

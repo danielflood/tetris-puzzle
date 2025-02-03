@@ -21,6 +21,7 @@ export class Board {
   scrollOffset: number;
   targetScroll: number;
   scrollSpeed: number;
+  placedPieces: Piece[];
 
   constructor() {
     this.dragging = false;
@@ -43,6 +44,7 @@ export class Board {
     
     // Initialize pieces
     this.availablePieces = Piece.createAllPieces();
+    this.placedPieces = [];
   }
 
   resetBoard(): void {
@@ -112,6 +114,7 @@ export class Board {
         }
       }
     }
+    this.placedPieces.push(piece);
   }
 
   checkWin(): boolean {

@@ -12,6 +12,8 @@ import {
   PADDING,
   COLORS,
 } from '../utils/constants';
+import { useSession, signIn, signOut } from 'next-auth/react';
+import Link from 'next/link';
 
 // Add these new interfaces at the top of the file
 interface CanvasLayers {
@@ -22,6 +24,15 @@ interface CanvasLayers {
 interface CanvasContexts {
   static: CanvasRenderingContext2D | null;
   dynamic: CanvasRenderingContext2D | null;
+}
+
+interface PiecePosition {
+  color: string;
+  cells: [number, number][];
+}
+
+interface SolutionData {
+  [key: number]: PiecePosition;
 }
 
 export default function TetrisGame() {
@@ -38,6 +49,8 @@ export default function TetrisGame() {
   const [scrollStartOffset, setScrollStartOffset] = useState(0);
   const lastRenderRef = useRef<number>(0);
   const isDirtyRef = useRef<boolean>(true);
+  const { data: session } = useSession();
+  const [hasSavedSolution, setHasSavedSolution] = useState(false);
 
   useEffect(() => {
     // Detect if we're on mobile
@@ -187,7 +200,7 @@ export default function TetrisGame() {
 
         if (x >= buttonX && x <= buttonX + buttonWidth &&
             y >= buttonY && y <= buttonY + buttonHeight) {
-          boardRef.current.resetBoard();
+          handleReset();
         }
         return;
       }
@@ -402,7 +415,7 @@ export default function TetrisGame() {
       
       if (x >= resetButtonX && x <= resetButtonX + resetButtonSize &&
           y >= resetButtonY && y <= resetButtonY + resetButtonSize) {
-        boardRef.current.resetBoard();
+        handleReset();
         return;
       }
       
@@ -415,7 +428,7 @@ export default function TetrisGame() {
 
         if (x >= buttonX && x <= buttonX + buttonWidth &&
             y >= buttonY && y <= buttonY + buttonHeight) {
-          boardRef.current.resetBoard();
+          handleReset();
         }
         return;
       }
@@ -584,34 +597,122 @@ export default function TetrisGame() {
     return null;
   };
 
+  // Update win check to save solution
+  useEffect(() => {
+    const board = boardRef.current;
+    if (board.hasWon && !hasSavedSolution) {
+      saveSolution();
+      setHasSavedSolution(true);
+    }
+  }, [boardRef.current.hasWon]);
+
+  // Add reset handler to clear saved state
+  const handleReset = () => {
+    boardRef.current.resetBoard();
+    setHasSavedSolution(false);
+    isDirtyRef.current = true;
+  };
+
+  // Update the saveSolution function to capture the correct positions
+  const saveSolution = async () => {
+    if (!session?.user) {
+      return;
+    }
+
+    // Create a 2D grid representation of the board
+    const boardState = Array(boardRef.current.grid.length).fill(null)
+      .map(() => Array(boardRef.current.grid[0].length).fill(null));
+
+    // Map each piece to a number and its color
+    const pieceColorMap = new Map();
+    boardRef.current.placedPieces.forEach((piece, index) => {
+      pieceColorMap.set(piece.color, index + 1); // +1 so 0 can represent empty cells
+    });
+
+    // Fill the board state with piece numbers
+    for (let row = 0; row < boardRef.current.grid.length; row++) {
+      for (let col = 0; col < boardRef.current.grid[0].length; col++) {
+        const cellColor = boardRef.current.grid[row][col];
+        boardState[row][col] = cellColor ? pieceColorMap.get(cellColor) : 0;
+      }
+    }
+
+    try {
+      const response = await fetch('/api/solutions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          boardState,
+          colorMap: Object.fromEntries([...pieceColorMap.entries()].map(([color, num]) => [num, color]))
+        }),
+      });
+
+      if (!response.ok) {
+        return;
+      }
+    } catch (error) {
+      // Silently fail - no need to show error to user for solution saving
+      return;
+    }
+  };
+
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-gray-900">
-      <div className="relative w-full h-full flex items-center justify-center">
-        <div 
-          className="relative" 
-          style={{ 
-            width: `${WINDOW_WIDTH}px`,
-            height: `${WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}px`,
-            maxWidth: '95vw',
-            maxHeight: '95vh'
-          }}
+      <div className="absolute top-4 right-4 flex gap-4 items-center">
+        {session ? (
+          <>
+            <span className="text-white">
+              {session.user.name}
+            </span>
+            <Link 
+              href="/solutions" 
+              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            >
+              My Solutions
+            </Link>
+            <button
+              onClick={() => signOut()}
+              className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+            >
+              Sign Out
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => signIn('google')}
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            Sign In
+          </button>
+        )}
+      </div>
+      
+      <div 
+        className="relative" 
+        style={{ 
+          width: `${WINDOW_WIDTH}px`,
+          height: `${WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}px`,
+          maxWidth: '95vw',
+          maxHeight: '95vh'
+        }}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        <canvas
+          ref={staticCanvasRef}
+          width={WINDOW_WIDTH}
+          height={WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}
+          className="absolute inset-0 w-full h-full border-2 border-gray-700 rounded-lg shadow-lg touch-none"
           onContextMenu={(e) => e.preventDefault()}
-        >
-          <canvas
-            ref={staticCanvasRef}
-            width={WINDOW_WIDTH}
-            height={WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}
-            className="absolute inset-0 w-full h-full border-2 border-gray-700 rounded-lg shadow-lg touch-none"
-            onContextMenu={(e) => e.preventDefault()}
-          />
-          <canvas
-            ref={dynamicCanvasRef}
-            width={WINDOW_WIDTH}
-            height={WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}
-            className="absolute inset-0 w-full h-full touch-none"
-            onContextMenu={(e) => e.preventDefault()}
-          />
-        </div>
+        />
+        <canvas
+          ref={dynamicCanvasRef}
+          width={WINDOW_WIDTH}
+          height={WINDOW_HEIGHT + SELECTION_HEIGHT + TITLE_HEIGHT}
+          className="absolute inset-0 w-full h-full touch-none"
+          onContextMenu={(e) => e.preventDefault()}
+        />
       </div>
     </div>
   );
